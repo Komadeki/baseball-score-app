@@ -1,23 +1,29 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter, useParams } from "next/navigation";
-import { doc, getDoc } from "firebase/firestore";
+import { useParams } from "next/navigation";
+import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { db } from "../../../firebaseConfig";
-import { addScore, getScores, updateScore, deleteScore } from "../../../firestoreUtils";
+import { updateGame } from "../../../firestoreUtils";
+
+// ✅ 追加: Recharts をインポート（得点推移グラフ用）
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 export default function GameDetail() {
-  const router = useRouter(); // ✅ 一覧に戻るためのルーター
   const { id } = useParams();
   const [game, setGame] = useState(null);
-  const [scores, setScores] = useState([]);
-  const [inning, setInning] = useState(1);
-  const [inningHalf, setInningHalf] = useState("表"); // ✅ イニングの表裏
+  const [location, setLocation] = useState("");
+  const [date, setDate] = useState("");
+  const [status, setStatus] = useState("ongoing");
+  const [isEditing, setIsEditing] = useState(false);
+  const [scoreData, setScoreData] = useState([]); // ✅ 得点推移グラフ用データ
+  const [team_home, setteam_home] = useState("");
+  const [team_away, setteam_away] = useState("");
+  const [inning, setInning] = useState("");
   const [team, setTeam] = useState("");
   const [runs, setRuns] = useState(0);
-  const [eventType, setEventType] = useState(""); // ✅ イベントの第1階層（バッティング / それ以外）
-  const [eventDetail, setEventDetail] = useState(""); // ✅ 詳細イベント（バッティングを選択時）
-  const [editingScore, setEditingScore] = useState(null);
+  const [event, setEvent] = useState("");
 
+  // ✅ Firestore から試合データを取得
   useEffect(() => {
     const fetchGame = async () => {
       if (!id) return;
@@ -25,67 +31,79 @@ export default function GameDetail() {
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
-        setGame(docSnap.data());
+        const gameData = docSnap.data();
+        setGame(gameData);
+        setLocation(gameData.location);
+        setDate(new Date(gameData.date.seconds * 1000).toISOString().slice(0, 16));
+        setStatus(gameData.status);
+        setteam_home(gameData.team_home);  // 追加
+        setteam_away(gameData.team_away);  // 追加
       } else {
         console.error("試合が見つかりませんでした。");
       }
     };
 
-    const fetchScores = async () => {
-      const scoreList = await getScores(id);
-      setScores(scoreList);
-    };
-
     fetchGame();
-    fetchScores();
   }, [id]);
 
-  const handleAddScore = async () => {
-    const finalEvent = eventType === "バッティング" ? eventDetail : eventType; // ✅ イベント詳細を考慮
-    await addScore(id, inning, inningHalf, team, runs, finalEvent);
-    setScores(await getScores(id)); // スコアを再取得
-    resetForm();
-  };
+  // ✅ Firestore からスコアデータをリアルタイムで取得
+  useEffect(() => {
+    if (!id) return;
 
-  const handleEditScore = async () => {
-    if (editingScore) {
-      const finalEvent = eventType === "バッティング" ? eventDetail : eventType; // ✅ イベント詳細を考慮
-      await updateScore(id, editingScore.id, { inning, inningHalf, team, runs, event: finalEvent });
-      setScores(await getScores(id)); // スコアを再取得
-      resetForm();
+    const scoresRef = collection(db, "games", id, "scores");
+
+    const unsubscribe = onSnapshot(scoresRef, (querySnapshot) => {
+      let inningScores = {};
+
+      querySnapshot.forEach((doc) => {
+        const score = doc.data();
+        if (!inningScores[score.inning]) {
+          inningScores[score.inning] = { inning: score.inning, [score.team]: score.runs };
+        } else {
+          inningScores[score.inning][score.team] =
+            (inningScores[score.inning][score.team] || 0) + score.runs;
+        }
+      });
+
+      setScoreData(Object.values(inningScores).sort((a, b) => a.inning - b.inning));
+    });
+
+    return () => unsubscribe();
+  }, [id]);
+
+  // ✅ 試合情報の更新処理
+    const handleUpdateGame = async () => {
+      await updateGame(id, {
+        team_home,
+        team_away,
+        location,
+        date: new Date(date),
+        status
+      });
+      setIsEditing(false);
+    };
+  
+
+  // ✅ スコアの追加処理
+  const addScore = async () => {
+    if (!inning || !team || runs < 0) {
+      alert("正しいスコアを入力してください");
+      return;
     }
-  };
 
-  const handleDeleteScore = async (scoreId) => {
-    if (confirm("このスコアを削除しますか？")) {
-      await deleteScore(id, scoreId);
-      setScores(await getScores(id)); // スコアを再取得
-    }
-  };
+    const scoresRef = collection(db, "games", id, "scores");
+    await addDoc(scoresRef, {
+      inning: parseInt(inning),
+      team,
+      runs: parseInt(runs),
+      event,
+      createdAt: serverTimestamp(),
+    });
 
-  const startEditing = (score) => {
-    setEditingScore(score);
-    setInning(score.inning);
-    setInningHalf(score.inningHalf);
-    setTeam(score.team);
-    setRuns(score.runs);
-    if (["ヒット", "HR", "ゴロアウト", "フライアウト"].includes(score.event)) {
-      setEventType("バッティング");
-      setEventDetail(score.event);
-    } else {
-      setEventType(score.event);
-      setEventDetail("");
-    }
-  };
-
-  const resetForm = () => {
-    setEditingScore(null);
-    setInning(1);
-    setInningHalf("表");
+    setInning("");
     setTeam("");
     setRuns(0);
-    setEventType("");
-    setEventDetail("");
+    setEvent("");
   };
 
   if (!game) {
@@ -94,64 +112,126 @@ export default function GameDetail() {
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4 text-center text-white">{game.team_home} vs {game.team_away}</h1>
-      <p className="text-center text-gray-400">場所: {game.location}</p>
-      <p className="text-center text-gray-400">日付: {new Date(game.date.seconds * 1000).toLocaleString()}</p>
-      <p className="text-center text-gray-400">ステータス: {game.status}</p>
+      <h1 className="text-2xl font-bold mb-4 text-center text-white">
+        {team_home} vs {team_away}
+      </h1>
 
-      {/* スコア入力フォーム */}
-      <div className="mt-6 bg-gray-900 p-6 rounded-lg shadow-md">
-        <h2 className="text-xl font-bold text-white">{editingScore ? "スコアを編集" : "スコアを追加"}</h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">回 (inning)</label>
-            <input type="number" className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600" value={inning} onChange={(e) => setInning(Number(e.target.value))} />
-          </div>
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">表 / 裏</label>
-            <select className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600" value={inningHalf} onChange={(e) => setInningHalf(e.target.value)}>
-              <option value="表">表</option>
-              <option value="裏">裏</option>
+      {!isEditing ? (
+        <>
+          <p className="text-center text-gray-400">場所: {game.location}</p>
+          <p className="text-center text-gray-400">
+            日付: {new Date(game.date.seconds * 1000).toLocaleString()}
+          </p>
+          <p className="text-center text-gray-400">ステータス: {game.status}</p>
+
+          <button
+            onClick={() => setIsEditing(true)}
+            className="bg-yellow-500 text-white px-4 py-2 rounded mt-4 w-full"
+          >
+            試合情報を編集            
+          </button>
+        </>
+      ) : (
+        <div className="mt-6 bg-gray-900 p-6 rounded-lg shadow-md">
+          {/* ✅ 試合情報を編集 */}
+          <h2 className="text-xl font-bold mb-4 text-white">試合情報を編集</h2>
+
+          {/* ✅ ホームチーム編集 */}
+          <label className="block text-gray-400 text-sm mb-1">ホームチーム名</label>
+          <input
+            type="text"
+            className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+            value={team_home}
+            onChange={(e) => setteam_home(e.target.value)}
+          />
+
+          {/* ✅ アウェイチーム編集 */}
+          <label className="block text-gray-400 text-sm mb-1">アウェイチーム名</label>
+          <input
+            type="text"
+            className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+            value={team_away}
+            onChange={(e) => setteam_away(e.target.value)}
+          />
+          {/* ✅ 試合会場 */}
+          <label className="block text-gray-400 text-sm mb-1">試合会場</label>
+          <input
+            type="text"
+            className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+          />
+
+
+            {/* ✅ 試合日程 */}
+            <label className="block text-gray-400 text-sm mb-1">試合日程</label>
+            <input
+              type="datetime-local"
+              className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+
+            {/* ✅ ステータス */}
+            <label className="block text-gray-400 text-sm mb-1">ステータス</label>
+            <select
+              className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="ongoing">進行中</option>
+              <option value="finished">終了</option>
             </select>
+
+            {/* ✅ 更新ボタン */}
+            <button
+              onClick={handleUpdateGame}
+              className="bg-green-500 text-white px-4 py-2 rounded w-full"
+            >
+              更新
+            </button>
+
+            {/* ✅ キャンセルボタン */}
+            <button
+              onClick={() => setIsEditing(false)}
+              className="bg-gray-500 text-white px-4 py-2 rounded w-full mt-2"
+            >
+              キャンセル
+            </button>
           </div>
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">チーム名</label>
-            <select className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600" value={team} onChange={(e) => setTeam(e.target.value)}>
-              <option value="">チームを選択</option>
-              <option value={game.team_home}>{game.team_home}</option>
-              <option value={game.team_away}>{game.team_away}</option>
-            </select>
+      )}
+
+        <div>
+          {/* ✅ 「試合情報の編集」の下に「試合の詳細」ボタンを追加 */}
+          <button
+            onClick={() => window.location.href = `/games/${id}/details`}
+
+            className="bg-blue-500 text-white px-4 py-2 rounded mt-4 w-full"
+          >
+            試合の詳細
+          </button>
           </div>
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">イベント</label>
-            <select className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600" value={eventType} onChange={(e) => setEventType(e.target.value)}>
-              <option value="">選択</option>
-              <option value="バッティング">バッティング</option>
-              <option value="盗塁">盗塁</option>
-              <option value="失策">失策</option>
-            </select>
-          </div>
-          {eventType === "バッティング" && (
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">バッティング詳細</label>
-              <select className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600" value={eventDetail} onChange={(e) => setEventDetail(e.target.value)}>
-                <option value="">詳細を選択</option>
-                <option value="ヒット">ヒット</option>
-                <option value="HR">ホームラン</option>
-                <option value="ゴロアウト">ゴロアウト</option>
-                <option value="フライアウト">フライアウト</option>
-              </select>
-            </div>
-          )}
-        </div>
-        <button onClick={editingScore ? handleEditScore : handleAddScore} className="bg-blue-500 text-white px-4 py-2 rounded mt-4 w-full">
-          {editingScore ? "更新" : "追加"}
-        </button>
+
+      {/* ✅ 得点推移グラフ */}
+      <div className="mt-8 bg-gray-900 p-6 rounded-lg shadow-md">
+        <h2 className="text-xl font-bold text-white">得点推移</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={scoreData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="inning" tick={{ fill: "white" }} />
+            <YAxis tick={{ fill: "white" }} />
+            <Tooltip />
+            <Legend />
+            {team_home && <Line type="monotone" dataKey={team_home} stroke="#8884d8" />}
+            {team_away && <Line type="monotone" dataKey={team_away} stroke="#82ca9d" />}
+          </LineChart>
+        </ResponsiveContainer>
       </div>
-
-      {/* 一覧に戻るボタン */}
-      <button onClick={() => router.push("/")} className="mt-6 bg-gray-500 text-white px-4 py-2 rounded block mx-auto">
-        一覧に戻る
+      <button
+        onClick={() => window.history.back()}
+        className="mt-6 bg-gray-500 text-white px-4 py-2 rounded block mx-auto"
+        >
+      試合一覧へ戻る
       </button>
     </div>
   );
