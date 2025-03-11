@@ -14,6 +14,11 @@ export default function GameDetails() {
   const [scoreData, setScoreData] = useState([]);
   const [firstAttack, setFirstAttack] = useState("");
   const [lastAttack, setLastAttack] = useState("");
+  const [editingScore, setEditingScore] = useState(null);
+
+  const handleEditClick = (score) => {
+    setEditingScore(score);
+  };  
 
   const processScoreData = (scores, firstAttack, lastAttack) => {
     const groupedScores = {};
@@ -113,7 +118,35 @@ useEffect(() => {
     fetchGame();
   }, [id]);
   
+  // ✅ スコア削除関数
+  const deleteScore = async (scoreId: string) => {
+    const confirmDelete = window.confirm("本当に削除しますか？");
+    if (!confirmDelete) return;
 
+    try {
+      const scoreRef = doc(db, "games", id, "scores", scoreId);
+      await deleteDoc(scoreRef);
+      alert("スコアを削除しました");
+      
+      // ✅ 手動でスコア一覧を更新
+      setScoreData((prevScores) => prevScores.filter((score) => score.id !== scoreId));
+    } catch (error) {
+      console.error("スコアの削除に失敗しました:", error);
+      alert("スコアの削除に失敗しました");
+    }
+  };
+
+  // ✅ スコア更新関数
+  const updateScore = async (scoreId: string, updatedData: { inning: number; half: string; team: string; runs: number }) => {
+    try {
+      const scoreRef = doc(db, "games", id, "scores", scoreId);
+      await updateDoc(scoreRef, updatedData);
+      alert("スコアを更新しました");
+    } catch (error) {
+      console.error("スコアの更新に失敗しました:", error);
+      alert("スコアの更新に失敗しました");
+    }
+  };
 
   // ✅ スコアの追加処理
   const addScore = async () => {
@@ -224,10 +257,80 @@ useEffect(() => {
                 <td className="py-2 px-4 border border-gray-700 text-white">{score.half}</td>
                 <td className="py-2 px-4 border border-gray-700 text-white">{score.team}</td>
                 <td className="py-2 px-4 border border-gray-700 text-white">{score.runs}</td>
+                <td className="py-2 px-4 border border-gray-700">
+                 {/* ✅ 削除ボタン */}
+                  <button
+                    onClick={() => deleteScore(score.id)}
+                    className="bg-red-500 text-white px-3 py-1 rounded"
+                  >
+                    削除
+                  </button>
+
+                  {/* ✅ 編集ボタン */}
+                  <button
+                    onClick={() => handleEditClick(score)}
+                    className="bg-yellow-500 text-white px-3 py-1 rounded ml-2"
+                  >
+                    編集
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {editingScore && (
+          <div className="mt-4 p-4 bg-gray-800 rounded">
+            <h2 className="text-white">スコアを編集</h2>
+            
+            <label className="block text-gray-400">イニング</label>
+            <input
+              type="number"
+              className="border p-2 rounded w-full"
+              value={editingScore.inning}
+              onChange={(e) => setEditingScore({ ...editingScore, inning: Number(e.target.value) })}
+            />
+
+            <label className="block text-gray-400">表 / 裏</label>
+            <select
+              className="border p-2 rounded w-full"
+              value={editingScore.half}
+              onChange={(e) => setEditingScore({ ...editingScore, half: e.target.value })}
+            >
+              <option value="表">表</option>
+              <option value="裏">裏</option>
+            </select>
+
+            <label className="block text-gray-400">チーム</label>
+            <input
+              type="text"
+              className="border p-2 rounded w-full"
+              value={editingScore.team}
+              onChange={(e) => setEditingScore({ ...editingScore, team: e.target.value })}
+            />
+
+            <label className="block text-gray-400">得点</label>
+            <input
+              type="number"
+              className="border p-2 rounded w-full"
+              value={editingScore.runs}
+              onChange={(e) => setEditingScore({ ...editingScore, runs: Number(e.target.value) })}
+            />
+
+            <button
+              onClick={() => updateScore(editingScore.id, editingScore)}
+              className="bg-green-500 text-white px-4 py-2 rounded mt-2 w-full"
+            >
+              更新
+            </button>
+
+            <button
+              onClick={() => setEditingScore(null)}
+              className="bg-gray-500 text-white px-4 py-2 rounded mt-2 w-full"
+            >
+              キャンセル
+            </button>
+          </div>
+        )}
       </div>
 
       <button
