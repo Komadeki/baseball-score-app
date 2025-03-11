@@ -12,37 +12,65 @@ export default function GameDetails() {
   const [team, setTeam] = useState("");
   const [runs, setRuns] = useState(0);
   const [scoreData, setScoreData] = useState([]);
+  const [firstAttack, setFirstAttack] = useState("");
+  const [lastAttack, setLastAttack] = useState("");
 
-  // ✅ スコアデータを集計する関数
-const processScoreData = (scores) => {
-  const groupedScores = {};
+  const processScoreData = (scores, firstAttack, lastAttack) => {
+    const groupedScores = {};
+  
+    scores.forEach((score) => {
+      const key = `${score.inning}-${score.half}`;
+      const teamName = score.half === "表" ? firstAttack : lastAttack; // 先攻・後攻を参照
+  
+      if (!groupedScores[key]) {
+        groupedScores[key] = {
+          id: score.id,
+          inning: score.inning,
+          half: score.half,
+          team: teamName, // 自動的にチーム名を設定
+          runs: score.runs,
+        };
+      } else {
+        groupedScores[key].runs += score.runs; // 同じイニングなら得点を加算
+      }
+    });
+  
+    const sortedData = Object.values(groupedScores).sort((a, b) => {
+      if (a.inning !== b.inning) return a.inning - b.inning;
+      return a.half === "表" ? -1 : 1;
+    });
+  
+    console.log("ソート後のデータ:", JSON.stringify(sortedData, null, 2)); // 🔍 デバッグ用
+  
+    return sortedData;
+  };
+  
+  
 
-  scores.forEach((score) => {
-    const key = `${score.inning}-${score.half}`; // イニングと表/裏をキーにする
-    if (!groupedScores[key]) {
-      groupedScores[key] = {
-        id: score.id,
-        inning: score.inning,
-        half: score.half,
-        team: score.team,
-        runs: score.runs, // 初回スコア
-      };
+// ✅ 試合データ（チーム名、先攻・後攻）をリアルタイム取得
+useEffect(() => {
+  if (!id) return;
+
+  const docRef = doc(db, "games", id);
+
+  // ✅ Firestore の onSnapshot を使用してリアルタイム更新
+  const unsubscribe = onSnapshot(docRef, (docSnap) => {
+    if (docSnap.exists()) {
+      const gameData = docSnap.data();
+      setGame(gameData);
+      setFirstAttack(gameData.firstAttack || ""); // 先攻チーム
+      setLastAttack(gameData.lastAttack || "");  // 後攻チーム
     } else {
-      groupedScores[key].runs += score.runs; // 同じイニングなら得点を加算
+      console.error("試合が見つかりませんでした。");
     }
   });
 
-  return Object.values(groupedScores).sort((a, b) => {
-    if (a.inning === b.inning) {
-      return a.inning - b.inning; // イニング順にソート
-    }
-    return a.half === "表" ? -1 : 1; // 表を先に表示
-  });
-};
+  return () => unsubscribe();
+}, [id]); // ✅ id の変更時に実行
 
 // ✅ useEffect の中でスコアデータを加工
 useEffect(() => {
-  if (!id) return;
+  if (!id || !firstAttack || !lastAttack) return;
 
   const scoresRef = collection(db, "games", id, "scores");
 
@@ -52,47 +80,40 @@ useEffect(() => {
       ...doc.data(),
     }));
 
-    const processedScores = processScoreData(rawScores); // データ整理を適用
-    setScoreData(processedScores);
+    console.log("ソート前のデータ:", JSON.stringify(rawScores, null, 2));
+
+    const processedScores = processScoreData(rawScores, firstAttack, lastAttack); // チーム情報を適用
+    console.log("ソート後のデータ:", JSON.stringify(processedScores, null, 2));
+
+    setScoreData(processedScores); // ✅ ソート後のデータを画面に適用
   });
 
   return () => unsubscribe();
-}, [id]);
+}, [id, firstAttack, lastAttack]); // ✅ firstAttack, lastAttack を依存関係に追加
+
 
   // ✅ Firestore から試合データを取得
   useEffect(() => {
-    console.log("取得する試合ID:", id);
+    if (!id) return;
+  
     const fetchGame = async () => {
-      if (!id) return;
       const docRef = doc(db, "games", id);
       const docSnap = await getDoc(docRef);
-
+  
       if (docSnap.exists()) {
-        console.log("試合データ:", docSnap.data()); // デバッグ用
-        setGame(docSnap.data());
+        const gameData = docSnap.data();
+        setGame(gameData);
+        setFirstAttack(gameData.firstAttack || "");  // ✅ 追加
+        setLastAttack(gameData.lastAttack || "");    // ✅ 追加
       } else {
         console.error("試合が見つかりませんでした。");
       }
     };
-
-    const fetchScores = async () => {
-      if (!id) return;
-      const scoresRef = collection(db, "games", id, "scores");
-
-      const unsubscribe = onSnapshot(scoresRef, (querySnapshot) => {
-        const scoreList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setScoreData(scoreList);
-      });
-
-      return () => unsubscribe();
-    };
-
+  
     fetchGame();
-    fetchScores();
   }, [id]);
+  
+
 
   // ✅ スコアの追加処理
   const addScore = async () => {
@@ -100,21 +121,24 @@ useEffect(() => {
       alert("正しいスコアを入力してください");
       return;
     }
-
+  
+    // ✅ チームによって自動で「表 or 裏」を決定
+    const inningType = team === firstAttack ? "表" : "裏";
+  
     const scoresRef = collection(db, "games", id, "scores");
     await addDoc(scoresRef, {
       inning,
-      half: inningType,// ✅ 表/裏を Firestore に保存する
+      half: inningType, // ✅ 自動設定
       team,
       runs,
       createdAt: serverTimestamp(),
     });
-
+  
     setInning(1);
-    setInningType("表");
     setTeam("");
     setRuns(0);
   };
+  
 
   if (!game) {
     return <p className="text-center mt-10">試合データを読み込み中...</p>;
@@ -145,14 +169,6 @@ useEffect(() => {
           {/* ✅ 表 or 裏 */}
           <div>
             <label className="block text-gray-400 text-sm mb-1">表 or 裏</label>
-            <select
-              className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600"
-              value={inningType}
-              onChange={(e) => setInningType(e.target.value)}
-            >
-              <option value="表">表</option>
-              <option value="裏">裏</option>
-            </select>
           </div>
 
           {/* ✅ チーム */}

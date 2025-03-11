@@ -22,6 +22,9 @@ export default function GameDetail() {
   const [team, setTeam] = useState("");
   const [runs, setRuns] = useState(0);
   const [event, setEvent] = useState("");
+  const [firstAttack, setFirstAttack] = useState("");
+  const [lastAttack, setLastAttack] = useState("");
+
 
   // ✅ Firestore から試合データを取得
   useEffect(() => {
@@ -38,6 +41,8 @@ export default function GameDetail() {
         setStatus(gameData.status);
         setteam_home(gameData.team_home);  // 追加
         setteam_away(gameData.team_away);  // 追加
+        setFirstAttack(gameData.firstAttack || ""); // ✅ 先攻チームをセット
+        setLastAttack(gameData.lastAttack || "");  // ✅ 後攻チームをセット
       } else {
         console.error("試合が見つかりませんでした。");
       }
@@ -78,7 +83,9 @@ export default function GameDetail() {
         team_away,
         location,
         date: new Date(date),
-        status
+        status,
+        firstAttack,  // ✅ 先攻チームを保存
+        lastAttack,   // ✅ 後攻チームを保存
       });
       setIsEditing(false);
     };
@@ -144,7 +151,6 @@ export default function GameDetail() {
             value={team_home}
             onChange={(e) => setteam_home(e.target.value)}
           />
-
           {/* ✅ アウェイチーム編集 */}
           <label className="block text-gray-400 text-sm mb-1">アウェイチーム名</label>
           <input
@@ -153,6 +159,32 @@ export default function GameDetail() {
             value={team_away}
             onChange={(e) => setteam_away(e.target.value)}
           />
+
+          {/* ✅ 後攻チームを選択 */}
+          <label className="block text-gray-400 text-sm mb-1">後攻チーム</label>
+          <select
+            className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+            value={lastAttack}
+            onChange={(e) => setLastAttack(e.target.value)}
+          >
+            <option value="">選択</option>
+            <option value={team_home}>{team_home}</option>
+            <option value={team_away}>{team_away}</option>
+          </select>
+
+          {/* ✅ 先攻チームを選択 */}
+          <label className="block text-gray-400 text-sm mb-1">先攻チーム</label>
+          <select
+            className="border p-2 rounded w-full bg-gray-800 text-white border-gray-600 mb-4"
+            value={firstAttack}
+            onChange={(e) => setFirstAttack(e.target.value)}
+          >
+            <option value="">選択</option>
+            <option value={team_home}>{team_home}</option>
+            <option value={team_away}>{team_away}</option>
+          </select>
+
+
           {/* ✅ 試合会場 */}
           <label className="block text-gray-400 text-sm mb-1">試合会場</label>
           <input
